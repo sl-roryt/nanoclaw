@@ -17,6 +17,7 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -262,10 +263,30 @@ async function buildContainerArgs(
   if (onecliApplied) {
     logger.info({ containerName }, 'OneCLI gateway config applied');
   } else {
-    logger.warn(
-      { containerName },
-      'OneCLI gateway not reachable — container will have no credentials',
-    );
+    // Fallback: inject credentials from .env directly as container env vars.
+    // Less secure than OneCLI (keys visible inside container), but works
+    // for local-only agents like the docs auditor.
+    const CREDENTIAL_KEYS = ['ANTHROPIC_API_KEY', 'ATLASSIAN_API_TOKEN'];
+    const creds = readEnvFile(CREDENTIAL_KEYS);
+    const injected: string[] = [];
+    for (const key of CREDENTIAL_KEYS) {
+      const value = process.env[key] || creds[key];
+      if (value) {
+        args.push('-e', `${key}=${value}`);
+        injected.push(key);
+      }
+    }
+    if (injected.length > 0) {
+      logger.info(
+        { containerName, keys: injected },
+        'Credentials injected from .env (OneCLI not available)',
+      );
+    } else {
+      logger.warn(
+        { containerName },
+        'OneCLI not reachable and no credentials in .env — container will have no credentials',
+      );
+    }
   }
 
   // Runtime-specific args for host gateway resolution
